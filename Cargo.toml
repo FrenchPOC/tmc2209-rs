@@ -1,0 +1,32 @@
+[package]
+name = "tmc2209"
+version = "0.1.0"
+edition = "2021"
+authors = ["FrenchPOC"]
+description = "A no_std Rust driver for the TMC2209 stepper motor driver via UART"
+license = "MIT"
+repository = "https://github.com/FrenchPOC/tmc2209-rs"
+homepage = "https://github.com/FrenchPOC/tmc2209-rs"
+documentation = "https://docs.rs/tmc2209"
+keywords = ["tmc2209", "trinamic", "stepper", "motor", "embedded", "no_std"]
+categories = ["embedded", "no-std", "hardware-support"]
+readme = "README.md"
+rust-version = "1.75"
+
+[features]
+default = ["blocking"]
+blocking = ["dep:embedded-io"]
+async = ["dep:embedded-io-async"]
+defmt = ["dep:defmt"]
+
+[dependencies]
+embedded-io = { version = "0.7", optional = true }
+embedded-io-async = { version = "0.7", optional = true }
+defmt = { version = "1", optional = true }
+
+[dev-dependencies]
+# For testing on host
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
