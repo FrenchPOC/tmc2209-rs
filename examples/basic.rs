@@ -10,14 +10,14 @@
 // This example requires std for compilation but the library is no_std
 #![allow(unused)]
 
-use tmc2209::{MicrostepResolution, Tmc2209};
+use tmc2209_uart::{MicrostepResolution, Tmc2209};
 
 /// Example function showing basic motor control.
 ///
 /// Replace `YourUartType` with your platform's UART type that implements
 /// `embedded_io::Read` and `embedded_io::Write`.
 #[cfg(feature = "blocking")]
-fn basic_motor_control<U, E>(uart: U) -> Result<(), tmc2209::Error<E>>
+fn basic_motor_control<U, E>(uart: U) -> Result<(), tmc2209_uart::Error<E>>
 where
     U: embedded_io::Read<Error = E> + embedded_io::Write<Error = E>,
 {
@@ -27,7 +27,7 @@ where
     // Check if the driver is responding
     if !driver.is_connected() {
         // Handle connection error
-        return Err(tmc2209::Error::NoResponse);
+        return Err(tmc2209_uart::Error::NoResponse);
     }
 
     // Clear any previous errors

@@ -1,9 +1,9 @@
-# tmc2209-rs
+# tmc2209-uart
 
 A `no_std` Rust driver for the **TMC2209** stepper motor driver, communicating via single-wire UART.
 
-[![Crates.io](https://img.shields.io/crates/v/tmc2209.svg)](https://crates.io/crates/tmc2209)
-[![Documentation](https://docs.rs/tmc2209/badge.svg)](https://docs.rs/tmc2209)
+[![Crates.io](https://img.shields.io/crates/v/tmc2209-uart.svg)](https://crates.io/crates/tmc2209-uart)
+[![Documentation](https://docs.rs/tmc2209-uart/badge.svg)](https://docs.rs/tmc2209-uart)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
@@ -22,13 +22,13 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tmc2209 = "0.1"
+tmc2209-uart = "0.1"
 ```
 
 ### Basic Usage (Blocking)
 
 ```rust
-use tmc2209::{Tmc2209, MicrostepResolution};
+use tmc2209_uart::{Tmc2209, MicrostepResolution};
 
 // Create driver with UART peripheral and slave address 0
 let mut driver = Tmc2209::new(uart, 0);
@@ -61,11 +61,11 @@ Enable the `async` feature:
 
 ```toml
 [dependencies]
-tmc2209 = { version = "0.1", default-features = false, features = ["async"] }
+tmc2209-uart = { version = "0.1", default-features = false, features = ["async"] }
 ```
 
 ```rust
-use tmc2209::Tmc2209;
+use tmc2209_uart::Tmc2209;
 
 let mut driver = Tmc2209::new(uart, 0);
 

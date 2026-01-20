@@ -6,7 +6,7 @@
 
 #![allow(unused)]
 
-use tmc2209::{MicrostepResolution, Tmc2209};
+use tmc2209_uart::{MicrostepResolution, Tmc2209};
 
 /// Perform sensorless homing using StallGuard.
 ///
@@ -17,7 +17,7 @@ use tmc2209::{MicrostepResolution, Tmc2209};
 /// 3. Use moderate speeds for reliable detection
 /// 4. Tune SGTHRS for your specific motor and mechanics
 #[cfg(feature = "blocking")]
-fn sensorless_homing<U, E>(uart: U) -> Result<(), tmc2209::Error<E>>
+fn sensorless_homing<U, E>(uart: U) -> Result<(), tmc2209_uart::Error<E>>
 where
     U: embedded_io::Read<Error = E> + embedded_io::Write<Error = E>,
 {
@@ -84,7 +84,7 @@ where
 
 /// Alternative: Home in both directions to find center.
 #[cfg(feature = "blocking")]
-fn home_to_center<U, E>(uart: U) -> Result<(), tmc2209::Error<E>>
+fn home_to_center<U, E>(uart: U) -> Result<(), tmc2209_uart::Error<E>>
 where
     U: embedded_io::Read<Error = E> + embedded_io::Write<Error = E>,
 {

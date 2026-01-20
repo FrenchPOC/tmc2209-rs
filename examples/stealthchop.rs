@@ -5,11 +5,11 @@
 
 #![allow(unused)]
 
-use tmc2209::{MicrostepResolution, Tmc2209};
+use tmc2209_uart::{MicrostepResolution, Tmc2209};
 
 /// Configure StealthChop with velocity-based mode switching.
 #[cfg(feature = "blocking")]
-fn configure_stealthchop<U, E>(uart: U) -> Result<(), tmc2209::Error<E>>
+fn configure_stealthchop<U, E>(uart: U) -> Result<(), tmc2209_uart::Error<E>>
 where
     U: embedded_io::Read<Error = E> + embedded_io::Write<Error = E>,
 {
