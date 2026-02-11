@@ -95,4 +95,19 @@ mod tests {
         log::info!("Look good: CRC write request computed={:#04x}", crc);
         assert!(verify(&[0x05, 0x00, 0x80, 0x00, 0x00, 0x00, 0x40, crc]));
     }
+
+    #[test_log::test]
+    fn test_crc_chopconf_frames() {
+        // CHOPCONF read request payload: [SYNC, slave=0, reg=0x6C]
+        let read_payload = [0x05, 0x00, 0x6C];
+        let read_crc = compute(&read_payload);
+        assert!(verify(&[0x05, 0x00, 0x6C, read_crc]));
+
+        // CHOPCONF write request payload: [SYNC, slave=0, reg|write, data=0x10000053]
+        let write_payload = [0x05, 0x00, 0xEC, 0x10, 0x00, 0x00, 0x53];
+        let write_crc = compute(&write_payload);
+        assert!(verify(&[
+            0x05, 0x00, 0xEC, 0x10, 0x00, 0x00, 0x53, write_crc
+        ]));
+    }
 }

@@ -47,8 +47,7 @@ pub fn current_to_cs(rms_current_ma: u16, rsense: f32, vsense: bool) -> Option<u
     let rms_current = rms_current_ma as f32 / 1000.0;
     let vfs = if vsense { 0.180 } else { 0.325 };
 
-    // sqrt(2) ≈ 1.41421356
-    let sqrt2 = 1.41421356f32;
+    let sqrt2 = core::f32::consts::SQRT_2;
     let cs_float = (rms_current * sqrt2 * rsense * 32.0 / vfs) - 1.0;
 
     if cs_float < 0.0 {
@@ -73,7 +72,7 @@ pub fn current_to_cs(rms_current_ma: u16, rsense: f32, vsense: bool) -> Option<u
 /// The RMS current in milliamps.
 pub fn cs_to_current(cs: u8, rsense: f32, vsense: bool) -> u16 {
     let vfs = if vsense { 0.180 } else { 0.325 };
-    let sqrt2 = 1.41421356f32;
+    let sqrt2 = core::f32::consts::SQRT_2;
 
     let cs = (cs.min(31) + 1) as f32;
     let rms_current = cs / 32.0 * vfs / (sqrt2 * rsense);

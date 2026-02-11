@@ -406,4 +406,50 @@ mod tests {
             response.data()
         );
     }
+
+    #[test_log::test]
+    fn test_chopconf_read_request_crc() {
+        let request = ReadRequest::new(0, Address::Chopconf);
+        let bytes = request.as_bytes();
+
+        assert_eq!(bytes[0], SYNC);
+        assert_eq!(bytes[1], 0);
+        assert_eq!(bytes[2], Address::Chopconf as u8);
+        assert!(crc::verify(bytes));
+    }
+
+    #[test_log::test]
+    fn test_chopconf_write_request_crc_and_payload() {
+        let raw = 0x1000_0053u32;
+        let request = WriteRequest::new(0, Address::Chopconf, raw);
+        let bytes = request.as_bytes();
+
+        assert_eq!(bytes[0], SYNC);
+        assert_eq!(bytes[1], 0);
+        assert_eq!(bytes[2], (Address::Chopconf as u8) | WRITE_BIT);
+        assert_eq!(request.data(), raw);
+        assert!(crc::verify(bytes));
+    }
+
+    #[test_log::test]
+    fn test_chopconf_read_response_decode_crc() {
+        let raw = 0x1000_0053u32;
+        let data = raw.to_be_bytes();
+        let mut response = [
+            SYNC,
+            MASTER_ADDR,
+            Address::Chopconf as u8,
+            data[0],
+            data[1],
+            data[2],
+            data[3],
+            0,
+        ];
+        response[7] = crc::compute(&response[..7]);
+
+        let decoded = ReadResponse::from_bytes::<()>(response).unwrap();
+        assert_eq!(decoded.address(), Some(Address::Chopconf));
+        assert_eq!(decoded.data(), raw);
+        assert!(decoded.crc_valid());
+    }
 }

@@ -6,10 +6,23 @@
 use crate::datagram::{ReadRequest, ReadResponse, ResponseReader, WriteRequest};
 use crate::error::Error;
 use crate::registers::{
-    Chopconf, Coolconf, DrvStatus, Gconf, Gstat, Ifcnt, IholdIrun, Ioin, MicrostepResolution,
-    Mscnt, Pwmconf, ReadableRegister, SgResult, Sgthrs, Tcoolthrs, Tpwmthrs, Tstep, Vactual,
-    WritableRegister,
+    Chopconf, Coolconf, DrvStatus, Gconf, Ifcnt, IholdIrun, MicrostepResolution, ReadableRegister,
+    SgResult, Sgthrs, Tcoolthrs, Tpwmthrs, Vactual, WritableRegister,
 };
+#[cfg(feature = "blocking")]
+use crate::registers::{Gstat, Ioin, Mscnt, Pwmconf, Tstep};
+
+#[cfg(feature = "defmt")]
+macro_rules! trace_transport {
+    ($($arg:tt)*) => {
+        defmt::trace!($($arg)*);
+    };
+}
+
+#[cfg(not(feature = "defmt"))]
+macro_rules! trace_transport {
+    ($($arg:tt)*) => {};
+}
 
 /// TMC2209 driver over UART.
 ///
@@ -20,7 +33,7 @@ use crate::registers::{
 /// # Type Parameters
 ///
 /// * `U` - UART peripheral type implementing `embedded_io::Read + embedded_io::Write`
-///         or `embedded_io_async::Read + embedded_io_async::Write`
+///   or `embedded_io_async::Read + embedded_io_async::Write`
 ///
 /// # Example (blocking)
 ///
@@ -47,6 +60,12 @@ pub struct Tmc2209<U> {
 }
 
 impl<U> Tmc2209<U> {
+    /// Number of transient read errors tolerated while assembling one response frame.
+    ///
+    /// Some half-duplex UART adapters can surface a framing/parity glitch during
+    /// TX->RX turnaround before valid response bytes arrive.
+    const MAX_TRANSIENT_READ_ERRORS: usize = 1;
+
     /// Create a new TMC2209 driver.
     ///
     /// # Arguments
@@ -105,6 +124,64 @@ impl<U> Tmc2209<U> {
     fn write_request<R: WritableRegister>(&self, reg: &R) -> WriteRequest {
         WriteRequest::new(self.slave_addr, R::ADDRESS, (*reg).into())
     }
+
+    #[inline]
+    fn map_uart_error<E>(err: E, context: &'static str) -> Error<E> {
+        let _ = context;
+        trace_transport!("UART transport error at {=str}", context);
+        Error::Uart(err)
+    }
+
+    #[inline]
+    fn trace_response_result<E>(result: &Result<ReadResponse, Error<E>>) {
+        #[cfg(not(feature = "defmt"))]
+        {
+            let _ = result;
+        }
+
+        #[cfg(feature = "defmt")]
+        match result {
+            Ok(response) => {
+                trace_transport!(
+                    "RX frame reg={=u8} crc_ok={=bool} bytes={=[u8]:x}",
+                    response.reg_addr(),
+                    response.crc_valid(),
+                    &response.as_bytes()[..]
+                );
+            }
+            Err(Error::CrcMismatch) => {
+                trace_transport!("RX frame rejected: CRC mismatch");
+            }
+            Err(Error::InvalidSync) => {
+                trace_transport!("RX frame rejected: invalid sync");
+            }
+            Err(Error::InvalidMasterAddress) => {
+                trace_transport!("RX frame rejected: invalid master address");
+            }
+            Err(Error::AddressMismatch { expected, actual }) => {
+                trace_transport!(
+                    "RX frame rejected: address mismatch expected={=u8} actual={=u8}",
+                    *expected,
+                    *actual
+                );
+            }
+            Err(Error::UnknownAddress(addr)) => {
+                trace_transport!("RX frame rejected: unknown address {=u8}", *addr);
+            }
+            Err(Error::InvalidSlaveAddress(addr)) => {
+                trace_transport!("RX frame rejected: invalid slave address {=u8}", *addr);
+            }
+            Err(Error::BufferTooSmall) => {
+                trace_transport!("RX frame rejected: buffer too small");
+            }
+            Err(Error::NoResponse) => {
+                trace_transport!("RX frame rejected: no response");
+            }
+            Err(Error::Uart(_)) => {
+                trace_transport!("RX frame rejected: UART transport error");
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -129,12 +206,15 @@ where
     /// The register value, or an error if communication fails.
     pub fn read_register<R: ReadableRegister>(&mut self) -> Result<R, Error<E>> {
         let request = self.read_request::<R>();
+        trace_transport!("TX read request: {=[u8]:x}", request.as_bytes());
 
         // Send the read request
         self.uart
             .write_all(request.as_bytes())
-            .map_err(Error::Uart)?;
-        self.uart.flush().map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "blocking write_all(read_register)"))?;
+        self.uart
+            .flush()
+            .map_err(|err| Self::map_uart_error(err, "blocking flush(read_register)"))?;
 
         self.skip_read_echo()?;
 
@@ -166,12 +246,15 @@ where
     /// `Ok(())` on success, or an error if communication fails.
     pub fn write_register<R: WritableRegister>(&mut self, reg: &R) -> Result<(), Error<E>> {
         let request = self.write_request(reg);
+        trace_transport!("TX write request: {=[u8]:x}", request.as_bytes());
 
         // Send the write request
         self.uart
             .write_all(request.as_bytes())
-            .map_err(Error::Uart)?;
-        self.uart.flush().map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "blocking write_all(write_register)"))?;
+        self.uart
+            .flush()
+            .map_err(|err| Self::map_uart_error(err, "blocking flush(write_register)"))?;
 
         self.skip_write_echo()?;
 
@@ -183,11 +266,14 @@ where
     /// Use this when you need to read a register by its raw address value.
     pub fn read_raw(&mut self, reg_addr: u8) -> Result<u32, Error<E>> {
         let request = ReadRequest::from_raw_addr(self.slave_addr, reg_addr);
+        trace_transport!("TX read request(raw): {=[u8]:x}", request.as_bytes());
 
         self.uart
             .write_all(request.as_bytes())
-            .map_err(Error::Uart)?;
-        self.uart.flush().map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "blocking write_all(read_raw)"))?;
+        self.uart
+            .flush()
+            .map_err(|err| Self::map_uart_error(err, "blocking flush(read_raw)"))?;
 
         self.skip_read_echo()?;
 
@@ -200,11 +286,14 @@ where
     /// Use this when you need to write a register by its raw address value.
     pub fn write_raw(&mut self, reg_addr: u8, data: u32) -> Result<(), Error<E>> {
         let request = WriteRequest::from_raw(self.slave_addr, reg_addr, data);
+        trace_transport!("TX write request(raw): {=[u8]:x}", request.as_bytes());
 
         self.uart
             .write_all(request.as_bytes())
-            .map_err(Error::Uart)?;
-        self.uart.flush().map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "blocking write_all(write_raw)"))?;
+        self.uart
+            .flush()
+            .map_err(|err| Self::map_uart_error(err, "blocking flush(write_raw)"))?;
 
         self.skip_write_echo()?;
 
@@ -238,7 +327,7 @@ where
             let n = self
                 .uart
                 .read(&mut buf[total_read..])
-                .map_err(Error::Uart)?;
+                .map_err(|err| Self::map_uart_error(err, "blocking read_exact(skip_echo)"))?;
             if n == 0 {
                 return Err(Error::NoResponse);
             }
@@ -254,15 +343,32 @@ where
     fn read_response(&mut self) -> Result<ReadResponse, Error<E>> {
         self.reader.reset();
         let mut buf = [0u8; 1];
+        let mut transient_read_errors = 0usize;
 
         loop {
-            let n = self.uart.read(&mut buf).map_err(Error::Uart)?;
+            let n = match self.uart.read(&mut buf) {
+                Ok(n) => n,
+                Err(err) => {
+                    transient_read_errors += 1;
+                    if transient_read_errors <= Self::MAX_TRANSIENT_READ_ERRORS {
+                        trace_transport!(
+                            "RX transient read error while waiting for frame; retry={=usize}",
+                            transient_read_errors
+                        );
+                        continue;
+                    }
+                    return Err(Self::map_uart_error(err, "blocking read(read_response)"));
+                }
+            };
             if n == 0 {
                 return Err(Error::NoResponse);
             }
+            transient_read_errors = 0;
+            trace_transport!("RX chunk: {=[u8]:x}", &buf[..n]);
 
             let (_, result) = self.reader.feed::<E>(&buf[..n]);
             if let Some(result) = result {
+                Self::trace_response_result(&result);
                 return result;
             }
         }
@@ -596,7 +702,7 @@ where
     /// # Arguments
     ///
     /// * `high_sensitivity` - true for high sensitivity (low current range),
-    ///                        false for low sensitivity (high current range)
+    ///   false for low sensitivity (high current range)
     pub fn set_vsense(&mut self, high_sensitivity: bool) -> Result<(), Error<E>> {
         let mut chopconf = self.read_register::<Chopconf>()?;
         chopconf.set_vsense(high_sensitivity);
@@ -680,13 +786,17 @@ where
     /// Sends a read request and waits for the response.
     pub async fn read_register_async<R: ReadableRegister>(&mut self) -> Result<R, Error<E>> {
         let request = self.read_request::<R>();
+        trace_transport!("TX read request(async): {=[u8]:x}", request.as_bytes());
 
         // Send the read request
         self.uart
             .write_all(request.as_bytes())
             .await
-            .map_err(Error::Uart)?;
-        self.uart.flush().await.map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "async write_all(read_register_async)"))?;
+        self.uart
+            .flush()
+            .await
+            .map_err(|err| Self::map_uart_error(err, "async flush(read_register_async)"))?;
 
         self.skip_read_echo_async().await?;
 
@@ -713,13 +823,17 @@ where
         reg: &R,
     ) -> Result<(), Error<E>> {
         let request = self.write_request(reg);
+        trace_transport!("TX write request(async): {=[u8]:x}", request.as_bytes());
 
         // Send the write request
         self.uart
             .write_all(request.as_bytes())
             .await
-            .map_err(Error::Uart)?;
-        self.uart.flush().await.map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "async write_all(write_register_async)"))?;
+        self.uart
+            .flush()
+            .await
+            .map_err(|err| Self::map_uart_error(err, "async flush(write_register_async)"))?;
 
         self.skip_write_echo_async().await?;
 
@@ -729,12 +843,16 @@ where
     /// Read a register by raw address (async).
     pub async fn read_raw_async(&mut self, reg_addr: u8) -> Result<u32, Error<E>> {
         let request = ReadRequest::from_raw_addr(self.slave_addr, reg_addr);
+        trace_transport!("TX read request(raw, async): {=[u8]:x}", request.as_bytes());
 
         self.uart
             .write_all(request.as_bytes())
             .await
-            .map_err(Error::Uart)?;
-        self.uart.flush().await.map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "async write_all(read_raw_async)"))?;
+        self.uart
+            .flush()
+            .await
+            .map_err(|err| Self::map_uart_error(err, "async flush(read_raw_async)"))?;
 
         self.skip_read_echo_async().await?;
 
@@ -745,12 +863,19 @@ where
     /// Write a register by raw address (async).
     pub async fn write_raw_async(&mut self, reg_addr: u8, data: u32) -> Result<(), Error<E>> {
         let request = WriteRequest::from_raw(self.slave_addr, reg_addr, data);
+        trace_transport!(
+            "TX write request(raw, async): {=[u8]:x}",
+            request.as_bytes()
+        );
 
         self.uart
             .write_all(request.as_bytes())
             .await
-            .map_err(Error::Uart)?;
-        self.uart.flush().await.map_err(Error::Uart)?;
+            .map_err(|err| Self::map_uart_error(err, "async write_all(write_raw_async)"))?;
+        self.uart
+            .flush()
+            .await
+            .map_err(|err| Self::map_uart_error(err, "async flush(write_raw_async)"))?;
 
         self.skip_write_echo_async().await?;
 
@@ -785,7 +910,7 @@ where
                 .uart
                 .read(&mut buf[total_read..])
                 .await
-                .map_err(Error::Uart)?;
+                .map_err(|err| Self::map_uart_error(err, "async read_exact(skip_echo)"))?;
             if n == 0 {
                 return Err(Error::NoResponse);
             }
@@ -801,15 +926,32 @@ where
     async fn read_response_async(&mut self) -> Result<ReadResponse, Error<E>> {
         self.reader.reset();
         let mut buf = [0u8; 1];
+        let mut transient_read_errors = 0usize;
 
         loop {
-            let n = self.uart.read(&mut buf).await.map_err(Error::Uart)?;
+            let n = match self.uart.read(&mut buf).await {
+                Ok(n) => n,
+                Err(err) => {
+                    transient_read_errors += 1;
+                    if transient_read_errors <= Self::MAX_TRANSIENT_READ_ERRORS {
+                        trace_transport!(
+                            "RX transient read error while waiting for frame(async); retry={=usize}",
+                            transient_read_errors
+                        );
+                        continue;
+                    }
+                    return Err(Self::map_uart_error(err, "async read(read_response_async)"));
+                }
+            };
             if n == 0 {
                 return Err(Error::NoResponse);
             }
+            transient_read_errors = 0;
+            trace_transport!("RX chunk(async): {=[u8]:x}", &buf[..n]);
 
             let (_, result) = self.reader.feed::<E>(&buf[..n]);
             if let Some(result) = result {
+                Self::trace_response_result(&result);
                 return result;
             }
         }
@@ -1128,5 +1270,268 @@ mod tests {
 
         let uart = driver.release();
         assert_eq!(uart.writes, request.as_bytes().to_vec());
+    }
+}
+
+#[cfg(all(test, feature = "async"))]
+mod async_tests {
+    use core::future::Future;
+    use core::task::{Context, Poll};
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use std::thread;
+    use std::vec;
+    use std::vec::Vec;
+
+    use super::Tmc2209;
+    use crate::crc;
+    use crate::datagram::{ReadRequest, WriteRequest, MASTER_ADDR, SYNC};
+    use crate::registers::{Address, Chopconf, Gconf, MicrostepResolution};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum MockAsyncUartError {
+        Framing,
+        #[cfg(not(feature = "skip-echo"))]
+        Other,
+    }
+
+    impl core::fmt::Display for MockAsyncUartError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::Framing => write!(f, "framing error"),
+                #[cfg(not(feature = "skip-echo"))]
+                Self::Other => write!(f, "mock uart error"),
+            }
+        }
+    }
+
+    impl core::error::Error for MockAsyncUartError {}
+
+    impl embedded_io_async::Error for MockAsyncUartError {
+        fn kind(&self) -> embedded_io_async::ErrorKind {
+            match self {
+                Self::Framing => embedded_io_async::ErrorKind::InvalidData,
+                #[cfg(not(feature = "skip-echo"))]
+                Self::Other => embedded_io_async::ErrorKind::Other,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    enum ReadEvent {
+        Bytes(Vec<u8>),
+        Error(MockAsyncUartError),
+    }
+
+    #[derive(Debug, Default)]
+    struct MockAsyncUart {
+        read_events: VecDeque<ReadEvent>,
+        writes: Vec<u8>,
+    }
+
+    impl MockAsyncUart {
+        fn with_events(events: Vec<ReadEvent>) -> Self {
+            Self {
+                read_events: events.into(),
+                writes: Vec::new(),
+            }
+        }
+    }
+
+    impl embedded_io_async::ErrorType for MockAsyncUart {
+        type Error = MockAsyncUartError;
+    }
+
+    impl embedded_io_async::Read for MockAsyncUart {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+            loop {
+                let Some(event) = self.read_events.front_mut() else {
+                    return Ok(0);
+                };
+
+                match event {
+                    ReadEvent::Bytes(chunk) => {
+                        if chunk.is_empty() {
+                            self.read_events.pop_front();
+                            continue;
+                        }
+
+                        let n = core::cmp::min(buf.len(), chunk.len());
+                        buf[..n].copy_from_slice(&chunk[..n]);
+                        chunk.drain(..n);
+
+                        if chunk.is_empty() {
+                            self.read_events.pop_front();
+                        }
+
+                        return Ok(n);
+                    }
+                    ReadEvent::Error(err) => {
+                        let err = *err;
+                        self.read_events.pop_front();
+                        return Err(err);
+                    }
+                }
+            }
+        }
+    }
+
+    impl embedded_io_async::Write for MockAsyncUart {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        async fn flush(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        struct NoopWaker;
+
+        impl std::task::Wake for NoopWaker {
+            fn wake(self: Arc<Self>) {}
+        }
+
+        let waker = std::task::Waker::from(Arc::new(NoopWaker));
+        let mut context = Context::from_waker(&waker);
+        let mut future = core::pin::pin!(future);
+
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => thread::yield_now(),
+            }
+        }
+    }
+
+    fn chopconf_response(value: u32) -> [u8; 8] {
+        let bytes = value.to_be_bytes();
+        let mut response = [
+            SYNC,
+            MASTER_ADDR,
+            Address::Chopconf as u8,
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3],
+            0,
+        ];
+        response[7] = crc::compute(&response[..7]);
+        response
+    }
+
+    #[test]
+    fn test_set_microsteps_async_read_modify_write_sequence() {
+        let read_request = ReadRequest::new(0, Address::Chopconf);
+        let mut initial = Chopconf::from_raw(0x1400_0053); // M16, keep default chopper bits
+        let response = chopconf_response(initial.raw());
+
+        initial.set_microstep_resolution(MicrostepResolution::M256);
+        let expected_write = WriteRequest::new(0, Address::Chopconf, initial.raw());
+
+        let mut events = Vec::new();
+        events.push(ReadEvent::Bytes(read_request.as_bytes().to_vec()));
+        events.push(ReadEvent::Bytes(response.to_vec()));
+        #[cfg(feature = "skip-echo")]
+        events.push(ReadEvent::Bytes(expected_write.as_bytes().to_vec()));
+
+        let uart = MockAsyncUart::with_events(events);
+        let mut driver = Tmc2209::new(uart, 0);
+
+        block_on(driver.set_microsteps_async(MicrostepResolution::M256)).unwrap();
+
+        let uart = driver.release();
+        assert_eq!(uart.writes.len(), ReadRequest::LEN + WriteRequest::LEN);
+        assert_eq!(&uart.writes[..ReadRequest::LEN], read_request.as_bytes());
+        assert_eq!(&uart.writes[ReadRequest::LEN..], expected_write.as_bytes());
+    }
+
+    #[cfg(not(feature = "skip-echo"))]
+    #[test]
+    fn test_set_microsteps_async_recovers_from_framing_and_stale_echo() {
+        let mut gconf = Gconf::new();
+        gconf.set_pdn_disable(true);
+        let gconf_write = WriteRequest::new(0, Address::Gconf, gconf.into());
+
+        let read_request = ReadRequest::new(0, Address::Chopconf);
+        let mut chopconf = Chopconf::from_raw(0x1400_0053); // M16
+        let response = chopconf_response(chopconf.raw());
+        chopconf.set_microstep_resolution(MicrostepResolution::M256);
+        let chopconf_write = WriteRequest::new(0, Address::Chopconf, chopconf.raw());
+
+        // Simulate the field failure mode:
+        // - stale echo from previous write
+        // - one framing error during TX->RX turnaround
+        // - echo for current read request
+        // - valid CHOPCONF response
+        let uart = MockAsyncUart::with_events(vec![
+            ReadEvent::Error(MockAsyncUartError::Framing),
+            ReadEvent::Bytes(gconf_write.as_bytes().to_vec()),
+            ReadEvent::Bytes(read_request.as_bytes().to_vec()),
+            ReadEvent::Bytes(response.to_vec()),
+        ]);
+        let mut driver = Tmc2209::new(uart, 0);
+
+        block_on(driver.write_register_async(&gconf)).unwrap();
+        block_on(driver.set_microsteps_async(MicrostepResolution::M256)).unwrap();
+
+        let uart = driver.release();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(gconf_write.as_bytes());
+        expected.extend_from_slice(read_request.as_bytes());
+        expected.extend_from_slice(chopconf_write.as_bytes());
+        assert_eq!(uart.writes, expected);
+    }
+
+    #[cfg(feature = "skip-echo")]
+    #[test]
+    fn test_set_microsteps_async_recovers_from_turnaround_framing_with_skip_echo() {
+        let mut gconf = Gconf::new();
+        gconf.set_pdn_disable(true);
+        let gconf_write = WriteRequest::new(0, Address::Gconf, gconf.into());
+
+        let read_request = ReadRequest::new(0, Address::Chopconf);
+        let mut chopconf = Chopconf::from_raw(0x1400_0053); // M16
+        let response = chopconf_response(chopconf.raw());
+        chopconf.set_microstep_resolution(MicrostepResolution::M256);
+        let chopconf_write = WriteRequest::new(0, Address::Chopconf, chopconf.raw());
+
+        let uart = MockAsyncUart::with_events(vec![
+            ReadEvent::Bytes(gconf_write.as_bytes().to_vec()),
+            ReadEvent::Bytes(read_request.as_bytes().to_vec()),
+            ReadEvent::Error(MockAsyncUartError::Framing),
+            ReadEvent::Bytes(response.to_vec()),
+            ReadEvent::Bytes(chopconf_write.as_bytes().to_vec()),
+        ]);
+        let mut driver = Tmc2209::new(uart, 0);
+
+        block_on(driver.write_register_async(&gconf)).unwrap();
+        block_on(driver.set_microsteps_async(MicrostepResolution::M256)).unwrap();
+
+        let uart = driver.release();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(gconf_write.as_bytes());
+        expected.extend_from_slice(read_request.as_bytes());
+        expected.extend_from_slice(chopconf_write.as_bytes());
+        assert_eq!(uart.writes, expected);
+    }
+
+    #[cfg(not(feature = "skip-echo"))]
+    #[test]
+    fn test_set_microsteps_async_fails_after_persistent_read_errors() {
+        let read_request = ReadRequest::new(0, Address::Chopconf);
+        let uart = MockAsyncUart::with_events(vec![
+            ReadEvent::Error(MockAsyncUartError::Framing),
+            ReadEvent::Error(MockAsyncUartError::Other),
+        ]);
+        let mut driver = Tmc2209::new(uart, 0);
+
+        let err = block_on(driver.set_microsteps_async(MicrostepResolution::M256)).unwrap_err();
+        assert!(matches!(err, crate::Error::Uart(MockAsyncUartError::Other)));
+
+        let uart = driver.release();
+        assert_eq!(uart.writes, read_request.as_bytes().to_vec());
     }
 }
