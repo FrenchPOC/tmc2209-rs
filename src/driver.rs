@@ -136,12 +136,7 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
 
-        // Read the response
-        // TMC2209 echoes back the request, then sends the response
-        // We need to skip the echo (4 bytes) and read the response (8 bytes)
-        let mut echo_buf = [0u8; 4];
-        self.read_exact(&mut echo_buf)?;
-
+        // Read and parse the response from the UART stream.
         let response = self.read_response()?;
 
         // Verify the register address matches
@@ -176,10 +171,6 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
 
-        // Read back the echo (8 bytes) - TMC2209 echoes write requests
-        let mut echo_buf = [0u8; 8];
-        self.read_exact(&mut echo_buf)?;
-
         Ok(())
     }
 
@@ -193,10 +184,6 @@ where
             .write_all(request.as_bytes())
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
-
-        // Skip echo
-        let mut echo_buf = [0u8; 4];
-        self.read_exact(&mut echo_buf)?;
 
         let response = self.read_response()?;
         Ok(response.data())
@@ -213,34 +200,37 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
 
-        // Read back echo
-        let mut echo_buf = [0u8; 8];
-        self.read_exact(&mut echo_buf)?;
-
         Ok(())
     }
 
-    /// Helper to read exact number of bytes.
-    fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error<E>> {
-        let mut total_read = 0;
-        while total_read < buf.len() {
-            let n = self.uart.read(&mut buf[total_read..]).map_err(Error::Uart)?;
+    /// Helper to read a complete response from the UART stream.
+    ///
+    /// This parser tolerates leading bytes (for example, transport-level echo)
+    /// and only returns once a valid 8-byte read response has been assembled.
+    fn read_response(&mut self) -> Result<ReadResponse, Error<E>> {
+        self.reader.reset();
+        let mut buf = [0u8; 16];
+
+        loop {
+            let n = self.uart.read(&mut buf).map_err(Error::Uart)?;
             if n == 0 {
                 return Err(Error::NoResponse);
             }
-            total_read += n;
+
+            let mut consumed = 0;
+            while consumed < n {
+                let (read_now, result) = self.reader.feed::<E>(&buf[consumed..n]);
+                consumed += read_now;
+
+                if let Some(result) = result {
+                    return result;
+                }
+
+                if read_now == 0 {
+                    break;
+                }
+            }
         }
-        Ok(())
-    }
-
-    /// Helper to read a complete response.
-    fn read_response(&mut self) -> Result<ReadResponse, Error<E>> {
-        self.reader.reset();
-        let mut buf = [0u8; 8];
-        self.read_exact(&mut buf)?;
-
-        let (_, result) = self.reader.feed(&buf);
-        result.ok_or(Error::NoResponse)?
     }
 
     // ========================================================================
@@ -431,7 +421,7 @@ where
         coolconf
             .set_semin(semin.min(15))
             .set_semax(semax.min(15))
-            .set_seup(0)  // +1 current step
+            .set_seup(0) // +1 current step
             .set_sedn(0); // -32 current step
         self.write_register(&coolconf)
     }
@@ -663,11 +653,7 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
 
-        // Skip the echo (4 bytes)
-        let mut echo_buf = [0u8; 4];
-        self.read_exact_async(&mut echo_buf).await?;
-
-        // Read the response
+        // Read and parse the response from the UART stream.
         let response = self.read_response_async().await?;
 
         // Verify the register address matches
@@ -698,10 +684,6 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
 
-        // Read back the echo (8 bytes)
-        let mut echo_buf = [0u8; 8];
-        self.read_exact_async(&mut echo_buf).await?;
-
         Ok(())
     }
 
@@ -714,10 +696,6 @@ where
             .await
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
-
-        // Skip echo
-        let mut echo_buf = [0u8; 4];
-        self.read_exact_async(&mut echo_buf).await?;
 
         let response = self.read_response_async().await?;
         Ok(response.data())
@@ -733,38 +711,37 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
 
-        // Read back echo
-        let mut echo_buf = [0u8; 8];
-        self.read_exact_async(&mut echo_buf).await?;
-
         Ok(())
     }
 
-    /// Helper to read exact number of bytes (async).
-    async fn read_exact_async(&mut self, buf: &mut [u8]) -> Result<(), Error<E>> {
-        let mut total_read = 0;
-        while total_read < buf.len() {
-            let n = self
-                .uart
-                .read(&mut buf[total_read..])
-                .await
-                .map_err(Error::Uart)?;
+    /// Helper to read a complete response from the UART stream (async).
+    ///
+    /// This parser tolerates leading bytes (for example, transport-level echo)
+    /// and only returns once a valid 8-byte read response has been assembled.
+    async fn read_response_async(&mut self) -> Result<ReadResponse, Error<E>> {
+        self.reader.reset();
+        let mut buf = [0u8; 16];
+
+        loop {
+            let n = self.uart.read(&mut buf).await.map_err(Error::Uart)?;
             if n == 0 {
                 return Err(Error::NoResponse);
             }
-            total_read += n;
+
+            let mut consumed = 0;
+            while consumed < n {
+                let (read_now, result) = self.reader.feed::<E>(&buf[consumed..n]);
+                consumed += read_now;
+
+                if let Some(result) = result {
+                    return result;
+                }
+
+                if read_now == 0 {
+                    break;
+                }
+            }
         }
-        Ok(())
-    }
-
-    /// Helper to read a complete response (async).
-    async fn read_response_async(&mut self) -> Result<ReadResponse, Error<E>> {
-        self.reader.reset();
-        let mut buf = [0u8; 8];
-        self.read_exact_async(&mut buf).await?;
-
-        let (_, result) = self.reader.feed(&buf);
-        result.ok_or(Error::NoResponse)?
     }
 
     // ========================================================================
@@ -927,5 +904,141 @@ where
     pub async fn is_standstill_async(&mut self) -> Result<bool, Error<E>> {
         let status = self.drv_status_async().await?;
         Ok(status.stst())
+    }
+}
+
+#[cfg(all(test, feature = "blocking"))]
+mod tests {
+    use std::collections::VecDeque;
+    use std::vec;
+    use std::vec::Vec;
+
+    use super::Tmc2209;
+    use crate::crc;
+    use crate::datagram::{ReadRequest, WriteRequest, MASTER_ADDR, SYNC};
+    use crate::registers::{Address, Ifcnt, IholdIrun};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct MockUartError;
+
+    impl core::fmt::Display for MockUartError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "mock uart error")
+        }
+    }
+
+    impl core::error::Error for MockUartError {}
+
+    impl embedded_io::Error for MockUartError {
+        fn kind(&self) -> embedded_io::ErrorKind {
+            embedded_io::ErrorKind::Other
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct MockUart {
+        read_chunks: VecDeque<Vec<u8>>,
+        writes: Vec<u8>,
+    }
+
+    impl MockUart {
+        fn with_reads(chunks: Vec<Vec<u8>>) -> Self {
+            Self {
+                read_chunks: chunks.into(),
+                writes: Vec::new(),
+            }
+        }
+    }
+
+    impl embedded_io::ErrorType for MockUart {
+        type Error = MockUartError;
+    }
+
+    impl embedded_io::Read for MockUart {
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+            let Some(chunk) = self.read_chunks.front_mut() else {
+                return Ok(0);
+            };
+
+            if chunk.is_empty() {
+                self.read_chunks.pop_front();
+                return Ok(0);
+            }
+
+            let n = core::cmp::min(buf.len(), chunk.len());
+            buf[..n].copy_from_slice(&chunk[..n]);
+            chunk.drain(..n);
+
+            if chunk.is_empty() {
+                self.read_chunks.pop_front();
+            }
+
+            Ok(n)
+        }
+    }
+
+    impl embedded_io::Write for MockUart {
+        fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn ifcnt_response(value: u8) -> [u8; 8] {
+        let mut response = [SYNC, MASTER_ADDR, Address::Ifcnt as u8, 0, 0, 0, value, 0];
+        response[7] = crc::compute(&response[..7]);
+        response
+    }
+
+    #[test]
+    fn test_read_register_with_transport_echo() {
+        let request = ReadRequest::new(0, Address::Ifcnt);
+        let response = ifcnt_response(0x12);
+
+        let uart = MockUart::with_reads(vec![
+            request.as_bytes().to_vec(),
+            response[..3].to_vec(),
+            response[3..].to_vec(),
+        ]);
+        let mut driver = Tmc2209::new(uart, 0);
+
+        let ifcnt: Ifcnt = driver.read_register().unwrap();
+        assert_eq!(ifcnt.count(), 0x12);
+
+        let uart = driver.release();
+        assert_eq!(uart.writes, request.as_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_read_register_without_echo() {
+        let request = ReadRequest::new(0, Address::Ifcnt);
+        let response = ifcnt_response(0x34);
+
+        let uart = MockUart::with_reads(vec![response[..2].to_vec(), response[2..].to_vec()]);
+        let mut driver = Tmc2209::new(uart, 0);
+
+        let ifcnt: Ifcnt = driver.read_register().unwrap();
+        assert_eq!(ifcnt.count(), 0x34);
+
+        let uart = driver.release();
+        assert_eq!(uart.writes, request.as_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_write_register_without_echo() {
+        let mut reg = IholdIrun::new();
+        reg.set_ihold(8).set_irun(16).set_iholddelay(6);
+        let request = WriteRequest::new(0, Address::IholdIrun, reg.into());
+
+        let uart = MockUart::default();
+        let mut driver = Tmc2209::new(uart, 0);
+        driver.write_register(&reg).unwrap();
+
+        let uart = driver.release();
+        assert_eq!(uart.writes, request.as_bytes().to_vec());
     }
 }

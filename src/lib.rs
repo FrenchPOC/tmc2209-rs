@@ -48,8 +48,8 @@
 //! - Write request: 8 bytes `[0x05, slave_addr, reg_addr|0x80, data[3:0], CRC]`
 //! - Read response: 8 bytes `[0x05, 0xFF, reg_addr, data[3:0], CRC]`
 //!
-//! The driver handles echo bytes automatically (TMC2209 echoes all sent data
-//! on its single-wire UART interface).
+//! Some UART transports echo transmitted bytes on the RX line. The response
+//! parser tolerates and skips leading non-response bytes automatically.
 
 #![no_std]
 #![cfg_attr(test, allow(unused_imports))]
