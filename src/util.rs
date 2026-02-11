@@ -196,34 +196,42 @@ pub const DEFAULT_FCLK: u32 = 12_000_000;
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn test_current_to_cs() {
         // With 0.11 ohm sense resistor, VSENSE=0
         // Max current ≈ 2.1A RMS
         let cs = current_to_cs(1000, 0.11, false);
+        log::info!("Look good: Current to CS conversion (1000mA) = {:?}", cs);
         assert!(cs.is_some());
 
         // Very high current should return None
         let cs = current_to_cs(5000, 0.11, false);
+        log::info!(
+            "Look good: High current (5000mA) correctly returns None = {:?}",
+            cs
+        );
         assert!(cs.is_none());
     }
 
-    #[test]
+    #[test_log::test]
     fn test_cs_to_current() {
         // CS=31 with 0.11 ohm, VSENSE=0 should give max current
         let current = cs_to_current(31, 0.11, false);
+        log::info!("Look good: CS to current (CS=31) = {}mA", current);
         assert!(current > 2000); // Should be around 2.1A
     }
 
-    #[test]
+    #[test_log::test]
     fn test_velocity_conversion() {
         // 100 steps/sec with 256 microsteps at 12MHz
         let vactual = velocity_to_vactual(100.0, 256, 12_000_000);
+        log::info!("Look good: Velocity to VACTUAL (100 steps/s) = {}", vactual);
         assert!(vactual > 0);
 
         // Convert back from TSTEP
         let tstep = 12_000_000 / (100 * 256); // Approximate
         let velocity = tstep_to_velocity(tstep as u32, 256, 12_000_000);
+        log::info!("Look good: TSTEP to velocity = {:?}", velocity);
         assert!(velocity.is_some());
     }
 }

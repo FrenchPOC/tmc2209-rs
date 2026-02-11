@@ -25,6 +25,8 @@ embedded-io-async = { version = "0.7", optional = true }
 defmt = { version = "1", optional = true }
 
 [dev-dependencies]
+test-log = { version = "0.2.19", default-features = false, features = ["trace"] }
+log = "0.4"
 # For testing on host
 
 [package.metadata.docs.rs]

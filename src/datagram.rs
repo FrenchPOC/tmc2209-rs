@@ -367,24 +367,27 @@ impl ResponseReader {
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn test_read_request() {
         let req = ReadRequest::new(0, Address::Gconf);
         assert_eq!(req.slave_addr(), 0);
         assert_eq!(req.reg_addr(), 0x00);
         assert_eq!(req.as_bytes().len(), 4);
+        log::info!("Look good: Read request created successfully");
+        log::info!("Values: reg_addr={:#x?}", req.as_bytes());
     }
 
-    #[test]
+    #[test_log::test]
     fn test_write_request() {
         let req = WriteRequest::new(0, Address::Gconf, 0x00000040);
         assert_eq!(req.slave_addr(), 0);
         assert_eq!(req.reg_addr(), 0x00);
         assert_eq!(req.data(), 0x00000040);
         assert_eq!(req.as_bytes().len(), 8);
+        log::info!("Look good: Write request with data={:#010x}", req.data());
     }
 
-    #[test]
+    #[test_log::test]
     fn test_response_reader() {
         // Create a mock response
         let mut response_bytes = [SYNC, MASTER_ADDR, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00];
@@ -397,5 +400,10 @@ mod tests {
         assert!(result.is_some());
         let response = result.unwrap().unwrap();
         assert_eq!(response.data(), 0x00000040);
+        log::info!(
+            "Look good: Response reader parsed {} bytes, data={:#010x}",
+            consumed,
+            response.data()
+        );
     }
 }

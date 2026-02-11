@@ -77,20 +77,22 @@ pub fn verify(data: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn test_crc_read_request() {
         // Example read request for GCONF (0x00) to slave 0
         let data = [0x05, 0x00, 0x00];
         let crc = compute(&data);
+        log::info!("Look good: CRC read request computed={:#04x}", crc);
         // This should produce a valid CRC
         assert!(verify(&[0x05, 0x00, 0x00, crc]));
     }
 
-    #[test]
+    #[test_log::test]
     fn test_crc_write_request() {
         // Example write request
         let data = [0x05, 0x00, 0x80, 0x00, 0x00, 0x00, 0x40];
         let crc = compute(&data);
+        log::info!("Look good: CRC write request computed={:#04x}", crc);
         assert!(verify(&[0x05, 0x00, 0x80, 0x00, 0x00, 0x00, 0x40, crc]));
     }
 }

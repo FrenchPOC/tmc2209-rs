@@ -52,7 +52,12 @@
 //! on its single-wire UART interface).
 
 #![no_std]
+#![cfg_attr(test, allow(unused_imports))]
 #![warn(missing_docs)]
+
+// Enable std for tests (needed for test-log and other test infrastructure)
+#[cfg(test)]
+extern crate std;
 
 pub mod crc;
 pub mod datagram;
