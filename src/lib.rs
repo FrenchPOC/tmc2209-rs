@@ -15,6 +15,7 @@
 //! - `blocking` (default): Enable blocking UART API using `embedded_io` traits
 //! - `async`: Enable async UART API using `embedded_io_async` traits
 //! - `defmt`: Enable `defmt::Format` derives for debugging
+//! - `skip-echo`: Force fixed-size echo reads (4 bytes for read request, 8 bytes for write request)
 //!
 //! ## Example
 //!
@@ -73,7 +74,7 @@ pub use error::Error;
 // Re-export commonly used register types
 pub use registers::{
     Address, Chopconf, Coolconf, DrvStatus, FactoryConf, Gconf, Gstat, Ifcnt, IholdIrun, Ioin,
-    MicrostepResolution, Mscnt, Mscuract, OtpProg, OtpRead, Pwmconf, PwmAuto, PwmScale,
+    MicrostepResolution, Mscnt, Mscuract, OtpProg, OtpRead, PwmAuto, PwmScale, Pwmconf,
     ReadableRegister, Register, SgResult, Sgthrs, Slaveconf, StandstillMode, Tcoolthrs, Tpowerdown,
     Tpwmthrs, Tstep, Vactual, WritableRegister,
 };

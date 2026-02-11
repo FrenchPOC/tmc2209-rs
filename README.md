@@ -82,6 +82,7 @@ let status = driver.drv_status_async().await?;
 | `blocking` | Yes | Enable blocking API using `embedded-io` |
 | `async` | No | Enable async API using `embedded-io-async` |
 | `defmt` | No | Enable `defmt::Format` for debugging |
+| `skip-echo` | No | Expect and discard fixed UART echo bytes before parsing responses |
 
 ## UART Configuration
 
@@ -90,6 +91,10 @@ The TMC2209 uses a single-wire UART interface:
 - **Baud rate**: 115200 (default, configurable via OTP)
 - **Format**: 8N1 (8 data bits, no parity, 1 stop bit)
 - **Mode**: Half-duplex (single wire for TX and RX)
+
+Some UART paths echo transmitted bytes back on RX. If your platform needs fixed
+echo skipping, enable the `skip-echo` feature. If your hardware removes echo,
+leave `skip-echo` disabled (default).
 
 ### Hardware Connection
 

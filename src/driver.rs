@@ -136,6 +136,8 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
 
+        self.skip_read_echo()?;
+
         // Read and parse the response from the UART stream.
         let response = self.read_response()?;
 
@@ -171,6 +173,8 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
 
+        self.skip_write_echo()?;
+
         Ok(())
     }
 
@@ -184,6 +188,8 @@ where
             .write_all(request.as_bytes())
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
+
+        self.skip_read_echo()?;
 
         let response = self.read_response()?;
         Ok(response.data())
@@ -200,6 +206,44 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().map_err(Error::Uart)?;
 
+        self.skip_write_echo()?;
+
+        Ok(())
+    }
+
+    /// Optionally skip the transport echo for read requests.
+    fn skip_read_echo(&mut self) -> Result<(), Error<E>> {
+        #[cfg(feature = "skip-echo")]
+        {
+            let mut echo = [0u8; ReadRequest::LEN];
+            self.read_exact(&mut echo)?;
+        }
+        Ok(())
+    }
+
+    /// Optionally skip the transport echo for write requests.
+    fn skip_write_echo(&mut self) -> Result<(), Error<E>> {
+        #[cfg(feature = "skip-echo")]
+        {
+            let mut echo = [0u8; WriteRequest::LEN];
+            self.read_exact(&mut echo)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "skip-echo")]
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error<E>> {
+        let mut total_read = 0;
+        while total_read < buf.len() {
+            let n = self
+                .uart
+                .read(&mut buf[total_read..])
+                .map_err(Error::Uart)?;
+            if n == 0 {
+                return Err(Error::NoResponse);
+            }
+            total_read += n;
+        }
         Ok(())
     }
 
@@ -209,7 +253,7 @@ where
     /// and only returns once a valid 8-byte read response has been assembled.
     fn read_response(&mut self) -> Result<ReadResponse, Error<E>> {
         self.reader.reset();
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 1];
 
         loop {
             let n = self.uart.read(&mut buf).map_err(Error::Uart)?;
@@ -217,18 +261,9 @@ where
                 return Err(Error::NoResponse);
             }
 
-            let mut consumed = 0;
-            while consumed < n {
-                let (read_now, result) = self.reader.feed::<E>(&buf[consumed..n]);
-                consumed += read_now;
-
-                if let Some(result) = result {
-                    return result;
-                }
-
-                if read_now == 0 {
-                    break;
-                }
+            let (_, result) = self.reader.feed::<E>(&buf[..n]);
+            if let Some(result) = result {
+                return result;
             }
         }
     }
@@ -653,6 +688,8 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
 
+        self.skip_read_echo_async().await?;
+
         // Read and parse the response from the UART stream.
         let response = self.read_response_async().await?;
 
@@ -684,6 +721,8 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
 
+        self.skip_write_echo_async().await?;
+
         Ok(())
     }
 
@@ -696,6 +735,8 @@ where
             .await
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
+
+        self.skip_read_echo_async().await?;
 
         let response = self.read_response_async().await?;
         Ok(response.data())
@@ -711,6 +752,45 @@ where
             .map_err(Error::Uart)?;
         self.uart.flush().await.map_err(Error::Uart)?;
 
+        self.skip_write_echo_async().await?;
+
+        Ok(())
+    }
+
+    /// Optionally skip the transport echo for read requests (async).
+    async fn skip_read_echo_async(&mut self) -> Result<(), Error<E>> {
+        #[cfg(feature = "skip-echo")]
+        {
+            let mut echo = [0u8; ReadRequest::LEN];
+            self.read_exact_async(&mut echo).await?;
+        }
+        Ok(())
+    }
+
+    /// Optionally skip the transport echo for write requests (async).
+    async fn skip_write_echo_async(&mut self) -> Result<(), Error<E>> {
+        #[cfg(feature = "skip-echo")]
+        {
+            let mut echo = [0u8; WriteRequest::LEN];
+            self.read_exact_async(&mut echo).await?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "skip-echo")]
+    async fn read_exact_async(&mut self, buf: &mut [u8]) -> Result<(), Error<E>> {
+        let mut total_read = 0;
+        while total_read < buf.len() {
+            let n = self
+                .uart
+                .read(&mut buf[total_read..])
+                .await
+                .map_err(Error::Uart)?;
+            if n == 0 {
+                return Err(Error::NoResponse);
+            }
+            total_read += n;
+        }
         Ok(())
     }
 
@@ -720,7 +800,7 @@ where
     /// and only returns once a valid 8-byte read response has been assembled.
     async fn read_response_async(&mut self) -> Result<ReadResponse, Error<E>> {
         self.reader.reset();
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 1];
 
         loop {
             let n = self.uart.read(&mut buf).await.map_err(Error::Uart)?;
@@ -728,18 +808,9 @@ where
                 return Err(Error::NoResponse);
             }
 
-            let mut consumed = 0;
-            while consumed < n {
-                let (read_now, result) = self.reader.feed::<E>(&buf[consumed..n]);
-                consumed += read_now;
-
-                if let Some(result) = result {
-                    return result;
-                }
-
-                if read_now == 0 {
-                    break;
-                }
+            let (_, result) = self.reader.feed::<E>(&buf[..n]);
+            if let Some(result) = result {
+                return result;
             }
         }
     }
@@ -1013,6 +1084,7 @@ mod tests {
         assert_eq!(uart.writes, request.as_bytes().to_vec());
     }
 
+    #[cfg(not(feature = "skip-echo"))]
     #[test]
     fn test_read_register_without_echo() {
         let request = ReadRequest::new(0, Address::Ifcnt);
@@ -1028,6 +1100,7 @@ mod tests {
         assert_eq!(uart.writes, request.as_bytes().to_vec());
     }
 
+    #[cfg(not(feature = "skip-echo"))]
     #[test]
     fn test_write_register_without_echo() {
         let mut reg = IholdIrun::new();
@@ -1035,6 +1108,21 @@ mod tests {
         let request = WriteRequest::new(0, Address::IholdIrun, reg.into());
 
         let uart = MockUart::default();
+        let mut driver = Tmc2209::new(uart, 0);
+        driver.write_register(&reg).unwrap();
+
+        let uart = driver.release();
+        assert_eq!(uart.writes, request.as_bytes().to_vec());
+    }
+
+    #[cfg(feature = "skip-echo")]
+    #[test]
+    fn test_write_register_with_transport_echo() {
+        let mut reg = IholdIrun::new();
+        reg.set_ihold(8).set_irun(16).set_iholddelay(6);
+        let request = WriteRequest::new(0, Address::IholdIrun, reg.into());
+
+        let uart = MockUart::with_reads(vec![request.as_bytes().to_vec()]);
         let mut driver = Tmc2209::new(uart, 0);
         driver.write_register(&reg).unwrap();
 
